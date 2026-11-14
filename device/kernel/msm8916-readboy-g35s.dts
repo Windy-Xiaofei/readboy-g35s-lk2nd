@@ -48,6 +48,19 @@
 	chosen {
 		stdout-path = "serial0";
 	};
+
+	/*
+	 * The SoC dtsi leaves the memory size at 0 ("bootloader is expected to
+	 * fill in the reg"). lk2nd does that on its normal boot path, but not
+	 * reliably for "fastboot boot", and a zero-sized memory node makes the
+	 * kernel die instantly. Spell it out: two 512 MiB banks, 1 GiB total,
+	 * as reported by lk2nd itself.
+	 */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x0 0x20000000>,
+		      <0x0 0xa0000000 0x0 0x20000000>;
+	};
 };
 
 /* Debug console. Harmless if the pads are not wired out. */

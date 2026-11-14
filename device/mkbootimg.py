@@ -21,6 +21,36 @@ KERNEL_OFFSET = 0x00008000
 RAMDISK_OFFSET = 0x02000000
 TAGS_OFFSET = 0x00000100
 
+# Qualcomm QCDT (dt_table v3) layout, taken from the stock ReadBoy boot image:
+#   header 12 bytes (magic, version, num_entries), then entries of 40 bytes
+#   entry = platform_id, variant_id, soc_rev, 0 x5, offset, size
+QCDT_MAGIC = 0x54444351           # "QCDT"
+QCDT_VERSION = 3
+QCDT_HDR = 12
+QCDT_ENTRY = 40
+QCDT_PLATFORMS = (0xCE, 0xF8, 0xF9, 0xFA)   # msm-id: 8916 family
+QCDT_VARIANT = 0x0001000B                   # board-id QCOM_BOARD_ID_MTP
+QCDT_SUBTYPES = (0x41, 0x42, 0x88)
+
+
+def build_qcdt(dtb, page=PAGE):
+    """Wrap a raw FDT into a QCDT container that lk2nd/aboot accepts."""
+    n = len(QCDT_PLATFORMS) * len(QCDT_SUBTYPES)
+    hdr = struct.pack("<III", QCDT_MAGIC, QCDT_VERSION, n)
+    payload_off = page
+    entries = b""
+    for pid in QCDT_PLATFORMS:
+        for sub in QCDT_SUBTYPES:
+            entries += struct.pack("<10I", pid, QCDT_VARIANT, sub,
+                                   0, 0, 0, 0, 0, payload_off, len(dtb))
+    assert len(entries) == n * QCDT_ENTRY
+    blob = hdr + entries
+    blob = blob.ljust(payload_off, b"\x00") + dtb
+    rem = len(blob) % page
+    if rem:
+        blob += b"\x00" * (page - rem)
+    return blob
+
 
 def pad(b, page=PAGE):
     rem = len(b) % page
@@ -37,6 +67,9 @@ def main():
     ap.add_argument("--cmdline", default="")
     ap.add_argument("--name", default="")
     ap.add_argument("--page-size", type=int, default=PAGE)
+    ap.add_argument("--qcdt", action="store_true", default=True,
+                    help="wrap the dtb in a Qualcomm QCDT container (default on)")
+    ap.add_argument("--no-qcdt", dest="qcdt", action="store_false")
     args = ap.parse_args()
 
     kern = open(args.kernel, "rb").read()
@@ -44,8 +77,13 @@ def main():
     dtb = open(args.dtb, "rb").read() if args.dtb else b""
     second = open(args.second, "rb").read() if args.second else b""
 
-    if dtb and dtb[:4] not in (b"\xd0\x0d\xfe\xed",):
-        raise SystemExit("dtb does not start with FDT magic: %r" % dtb[:4])
+    if dtb:
+        if dtb[:4] != b"\xd0\x0d\xfe\xed":
+            raise SystemExit("dtb does not start with FDT magic: %r" % dtb[:4])
+        if args.qcdt:
+            plain = len(dtb)
+            dtb = build_qcdt(dtb, args.page_size)
+            print("wrapped dtb in QCDT: %d -> %d bytes" % (plain, len(dtb)))
 
     name = args.name.encode()[:15].ljust(16, b"\x00")
     cmdline = args.cmdline.encode()[:511].ljust(512, b"\x00")

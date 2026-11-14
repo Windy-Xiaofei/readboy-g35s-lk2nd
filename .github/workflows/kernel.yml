@@ -55,11 +55,22 @@ jobs:
         working-directory: linux
         run: make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- msm8916_defconfig
 
+      # msm8916_defconfig builds the UDC driver but not the configfs gadget
+      # glue, so an initramfs cannot create any USB gadget and the device
+      # stays invisible on the host. Needed for the boot smoke test.
+      - name: Enable USB gadget configfs
+        working-directory: linux
+        run: |
+          ./scripts/config -e USB_CONFIGFS -e USB_CONFIGFS_ACM -e USB_LIBCOMPOSITE
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          echo "--- gadget config ---"
+          grep -E "CONFIG_USB_CONFIGFS=|CONFIG_CONFIGFS_FS=|CONFIG_USB_GADGET=" .config
+
       - name: Build kernel and dtbs
         working-directory: linux
         run: |
-          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs
-          ls -lh arch/arm64/boot/Image.gz
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image dtbs
+          ls -lh arch/arm64/boot/Image
           ls -lh arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb
 
       - name: Build test initramfs
@@ -99,7 +110,7 @@ jobs:
       - name: Package boot image
         run: |
           python3 helper/device/mkbootimg.py \
-            --kernel linux/arch/arm64/boot/Image.gz \
+            --kernel linux/arch/arm64/boot/Image \
             --ramdisk initramfs.cpio.gz \
             --dtb linux/arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb \
             --out boot-mainline-g35s.img \
@@ -115,6 +126,6 @@ jobs:
           name: mainline-g35s-boot
           path: |
             boot-mainline-g35s.img
-            linux/arch/arm64/boot/Image.gz
+            linux/arch/arm64/boot/Image
             linux/arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb
           if-no-files-found: error
