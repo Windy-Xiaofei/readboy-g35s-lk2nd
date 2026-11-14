@@ -1,0 +1,93 @@
+name: Build mainline kernel for ReadBoy G35S
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  kernel:
+    name: kernel-msm8916
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout helper repo
+        uses: actions/checkout@v4
+        with:
+          path: helper
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yqq \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            bc bison flex libssl-dev \
+            device-tree-compiler \
+            cpio busybox-static
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: Clone msm8916-mainline kernel
+        run: |
+          git clone --depth=1 --branch master \
+            https://github.com/msm8916-mainline/linux.git linux
+          cd linux && git log -1 --oneline
+
+      - name: Inject device tree
+        run: |
+          DTS_DIR=linux/arch/arm64/boot/dts/qcom
+          cp helper/device/kernel/msm8916-readboy-g35s.dts "$DTS_DIR/"
+          printf 'dtb-$(CONFIG_ARCH_QCOM)\t+= msm8916-readboy-g35s.dtb\n' >> "$DTS_DIR/Makefile"
+          echo "--- tail of dts Makefile ---"
+          tail -4 "$DTS_DIR/Makefile"
+
+      - name: Configure kernel
+        working-directory: linux
+        run: make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- msm8916_defconfig
+
+      - name: Build kernel and dtbs
+        working-directory: linux
+        run: |
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs
+          ls -lh arch/arm64/boot/Image.gz
+          ls -lh arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb
+
+      - name: Build test initramfs
+        run: |
+          set -e
+          BB="$(command -v busybox || echo /bin/busybox)"
+          echo "busybox: $BB"
+          mkdir -p rootfs/bin rootfs/sbin rootfs/proc rootfs/sys rootfs/dev rootfs/tmp
+          cp "$BB" rootfs/bin/busybox
+          chmod +x rootfs/bin/busybox
+          for app in $(rootfs/bin/busybox --list); do
+            ln -sf busybox "rootfs/bin/$app" 2>/dev/null || true
+          done
+          cp helper/device/init rootfs/init
+          chmod +x rootfs/init
+          ( cd rootfs && find . | cpio -o -H newc --quiet | gzip -9 ) > initramfs.cpio.gz
+          ls -lh initramfs.cpio.gz
+          echo "--- init script present ---"
+          head -3 rootfs/init
+
+      - name: Package boot image
+        run: |
+          python3 helper/device/mkbootimg.py \
+            --kernel linux/arch/arm64/boot/Image.gz \
+            --ramdisk initramfs.cpio.gz \
+            --dtb linux/arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb \
+            --out boot-mainline-g35s.img \
+            --name "readboy-g35s" \
+            --cmdline "console=ttyMSM0,115200 quiet"
+          ls -lh boot-mainline-g35s.img
+          python3 -c "import struct,sys; d=open('boot-mainline-g35s.img','rb').read(); ks,_,rs,_,ss,_,_,pg=struct.unpack_from('<IIIIIIII',d,8); dt=struct.unpack_from('<I',d,40)[0]; print('kernel',ks,'ramdisk',rs,'dtb',dt,'page',pg,'total',len(d))"
+
+      - name: Upload boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainline-g35s-boot
+          path: |
+            boot-mainline-g35s.img
+            linux/arch/arm64/boot/Image.gz
+            linux/arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb
+          if-no-files-found: error

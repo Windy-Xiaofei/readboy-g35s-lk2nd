@@ -1,0 +1,54 @@
+#!/bin/sh
+# initramfs init for the first mainline boot test.
+# Purpose: prove the kernel booted by bringing up a USB CDC-ACM gadget,
+# so the host sees a new serial device. Nothing is written to storage.
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mount -t proc     none /proc     2>/dev/null
+mount -t sysfs    none /sys      2>/dev/null
+mount -t devtmpfs none /dev      2>/dev/null
+mkdir -p /dev/pts && mount -t devpts none /dev/pts 2>/dev/null
+
+echo "=== readboy-g35s: mainline test initramfs ==="
+cat /proc/version
+echo "cmdline: $(cat /proc/cmdline)"
+
+mkdir -p /sys/kernel/config
+mount -t configfs none /sys/kernel/config 2>/dev/null
+
+G=/sys/kernel/config/usb_gadget/g1
+mkdir -p "$G" 2>/dev/null
+if [ -d "$G" ]; then
+    echo 0x1d6b > "$G/idVendor"   2>/dev/null
+    echo 0x0104 > "$G/idProduct"  2>/dev/null
+
+    mkdir -p "$G/strings/0x409"
+    echo "ReadBoy"          > "$G/strings/0x409/manufacturer"
+    echo "G35S-mainline"    > "$G/strings/0x409/product"
+    echo "0123456789"       > "$G/strings/0x409/serialnumber"
+
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo "acm"              > "$G/configs/c.1/strings/0x409/configuration"
+
+    mkdir -p "$G/functions/acm.usb0"
+    ln -sf "$G/functions/acm.usb0" "$G/configs/c.1/" 2>/dev/null
+
+    UDC="$(ls /sys/class/udc 2>/dev/null | head -n1)"
+    echo "UDC: ${UDC:-<none>}"
+    if [ -n "$UDC" ]; then
+        echo "$UDC" > "$G/UDC" && echo "gadget bound to $UDC"
+    else
+        echo "no UDC available - USB gadget not started"
+    fi
+else
+    echo "configfs/usb_gadget unavailable - kernel has no gadget support"
+fi
+
+echo "=== initramfs ready, idling ==="
+i=0
+while true; do
+    i=$((i + 1))
+    echo "alive $i"
+    sleep 20
+done

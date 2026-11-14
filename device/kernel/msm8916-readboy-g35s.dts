@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * ReadBoy G35S (读书郎 G35S) - MSM8916 / Snapdragon 410
+ *
+ * 8" 800x1280 tablet, stock Android 4.4.
+ *
+ * Board identification taken from the stock downstream DTB:
+ *   model        = "Allwinner Technologies, Inc. MSM8916 ARD Loong"
+ *   qcom,msm-id  = <0xCE 0>, <0xF8 0>, <0xF9 0>, <0xFA 0>
+ *   qcom,board-id= <0x1000B 0x41>, <0x1000B 0x42>, <0x1000B 0x88>
+ *
+ * 0x1000B is QCOM_BOARD_ID_MTP, i.e. this is an MTP reference-design derivative.
+ * That is why this file is based on msm8916-mtp.dts and pulls in
+ * msm8916-pm8916.dtsi (the reference regulator/USB/WCNSS connections).
+ *
+ * ---------------------------------------------------------------------------
+ * STAGE 1 - deliberately minimal. Goal: mainline kernel boots and brings up
+ * USB peripheral mode, so we get a visible device on the host.
+ *
+ * NOT enabled on purpose yet:
+ *   - display  : panel driver for NT35521/KD080D34 does not exist in mainline;
+ *                enabling a wrong panel node hangs the boot
+ *   - touch    : goodix,gt9xx @ i2c 0x5d (add later, it is low risk)
+ *   - gpio-keys: needs the real GPIO numbers from the stock DTB
+ *   - wcnss    : WiFi/BT needs MAC address fixup
+ *   - sound / camera / sensors
+ *
+ * SAFETY: this file must not override any regulator voltage. The reference
+ * values from msm8916-pm8916.dtsi are kept untouched on purpose - a wrong
+ * rail voltage is the one class of DTS bug that can damage hardware.
+ * ---------------------------------------------------------------------------
+ */
+
+/dts-v1/;
+
+#include "msm8916-pm8916.dtsi"
+
+/ {
+	model = "ReadBoy G35S";
+	compatible = "readboy,g35s", "qcom,msm8916-mtp", "qcom,msm8916";
+	chassis-type = "tablet";
+
+	aliases {
+		serial0 = &blsp_uart2;
+		usid0 = &pm8916_0;
+	};
+
+	chosen {
+		stdout-path = "serial0";
+	};
+};
+
+/* Debug console. Harmless if the pads are not wired out. */
+&blsp_uart2 {
+	pinctrl-0 = <&blsp_uart2_console_default>;
+	pinctrl-1 = <&blsp_uart2_console_sleep>;
+	pinctrl-names = "default", "sleep";
+	status = "okay";
+};
+
+/* eMMC (the only storage on this board, no SD slot on the PCB). */
+&sdhc_1 {
+	status = "okay";
+};
+
+/* USB in peripheral mode so the host can see the device boot. */
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+&usb_hs_phy {
+	status = "okay";
+};

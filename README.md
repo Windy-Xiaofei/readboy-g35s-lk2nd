@@ -133,3 +133,48 @@ qcom,board-id = <0x1000b 0x41>, <0x1000b 0x42>, <0x1000b 0x88>;
 
 ⚠ 注意：刷入 lk2nd 会改变设备当前"启动失败回落到 9006/UMS"的行为。
 写之前我们已经有整盘备份和原厂 `boot.img`，可以回滚。
+
+---
+
+# 第二个 workflow：mainline 内核
+
+`.github/workflows/kernel.yml` 会构建 mainline 内核并打包成可 `fastboot boot` 的镜像。
+
+## 它做什么
+
+1. 克隆 `msm8916-mainline/linux`（`master`）
+2. 注入 `device/kernel/msm8916-readboy-g35s.dts`，并往 `arch/arm64/boot/dts/qcom/Makefile` 追加 dtb 目标
+3. `make msm8916_defconfig` + `make Image.gz dtbs`
+4. 用 `busybox-static` 做一个测试 initramfs（`device/init`），里面会通过 configfs 起一个 **USB CDC-ACM gadget**
+5. `device/mkbootimg.py` 打包成 `boot-mainline-g35s.img`
+6. 上传 artifact：`mainline-g35s-boot`
+
+## 为什么 initramfs 要起 USB gadget
+
+这台机器**没有可用的显示、也没有串口引出**。内核起来之后，
+唯一能观察到的信号就是 USB。所以 initramfs 里挂了 `1d6b:0104` 的 CDC-ACM 设备：
+
+- 主机看到新串口 → **内核成功启动了**
+- 主机什么都没看到、而且 fastboot 又出现了 → 内核早期崩溃
+
+## 第一版 DTS 的范围
+
+只启用三样东西：UART2 控制台、eMMC（`sdhc_1`）、USB peripheral。
+
+**刻意关掉**：显示、触摸、GPIO 按键、WiFi/BT、音频、摄像头、传感器。
+
+原因见 `port/SAFETY.md`：显示和 regulator 是最容易造成不可逆损坏的两块，
+先把"内核能起来"这件事验证掉，再一个一个加。
+
+## 使用方式
+
+push 之后在 Actions 页面等 `Build mainline kernel for ReadBoy G35S` 跑完
+（约 10–20 分钟，内核编译比较慢），下载 `mainline-g35s-boot`。
+
+然后：
+
+```bash
+fastboot boot boot-mainline-g35s.img      # 只加载到内存，不写 flash
+```
+
+**不要**用 `fastboot flash`，直到 RAM 引导连续稳定成功。
