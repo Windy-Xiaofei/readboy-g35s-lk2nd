@@ -127,5 +127,6 @@ jobs:
           path: |
             boot-mainline-g35s.img
             linux/arch/arm64/boot/Image
-            linux/arch/arm64/boot/dts/qcom/msm8916-readboy-g35s.dtb
+            linux/arch/arm64/boot/dts/qcom/msm8916-*.dtb
+            linux/arch/arm64/boot/dts/qcom/apq8016-*.dtb
           if-no-files-found: error
