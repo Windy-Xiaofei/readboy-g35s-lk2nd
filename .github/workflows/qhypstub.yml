@@ -1,0 +1,43 @@
+name: Build qhypstub (hyp replacement)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: qhypstub-msm8916
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yqq gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu python3-pip
+          aarch64-linux-gnu-gcc --version | head -1
+          python3 -m pip install --break-system-packages -q "cryptography>=3.1"
+
+      - name: Clone qhypstub and qtestsign
+        run: |
+          git clone --depth=1 https://github.com/msm8916-mainline/qhypstub.git
+          git clone --depth=1 https://github.com/msm8916-mainline/qtestsign.git qhypstub/qtestsign
+
+      - name: Build and sign
+        working-directory: qhypstub
+        run: |
+          make CROSS_COMPILE=aarch64-linux-gnu-
+          ls -l qhypstub.elf qhypstub.bin qhypstub-test-signed.mbn
+          echo "--- file types ---"
+          file qhypstub.elf qhypstub.bin qhypstub-test-signed.mbn
+          echo "--- sha256 ---"
+          sha256sum qhypstub.bin qhypstub-test-signed.mbn
+
+      - name: Upload qhypstub
+        uses: actions/upload-artifact@v4
+        with:
+          name: qhypstub-msm8916
+          path: |
+            qhypstub/qhypstub-test-signed.mbn
+            qhypstub/qhypstub.bin
+          if-no-files-found: error
