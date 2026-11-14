@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * ReadBoy G35S (读书郎 G35S)
+ * SoC: Qualcomm MSM8916 (Snapdragon 410)
+ * Display: 8" 800x1280 (portrait), Android 4.4 stock ROM
+ *
+ * IDs taken verbatim from the stock DTB (see dump/dts/dtb_00.dts):
+ *   qcom,msm-id   = <0xCE 0>, <0xF8 0>, <0xF9 0>, <0xFA 0>
+ *   qcom,board-id = <0x1000B 0x41>, <0x1000B 0x42>, <0x1000B 0x88>
+ *
+ * 0x1000B is the MTP reference-design board id, so this tablet is an
+ * "MSM8916 ARD Loong" MTP derivative (low customisation -> good for porting).
+ *
+ * ---------------------------------------------------------------------------
+ * STAGE 1 (this file): minimal entry.
+ *   Goal: lk2nd boots, registers as a fastboot device, so we have a real
+ *   flashing interface. No panel detection, no device-specific DTB handover.
+ *
+ * STAGE 2 (later, once stage 1 is confirmed working): add panel support.
+ *   The stock DTB offers 6 panel variants, selected at runtime via
+ *   qcom,dsi-pref-prim-str-1001 -> nt35521_c8
+ *   qcom,dsi-pref-prim-str-1110 -> kd080d34
+ *     qcom,mdss_dsi_video_nt35521
+ *     qcom,mdss_dsi_video_nt35521_c8
+ *     qcom,mdss_dsi_video_kd080d34
+ *     qcom,mdss_dsi_video_boe
+ *     qcom,mdss_dsi_video_djn8ich
+ *     qcom,mdss_dsi_video_68200
+ *   These names must match lk2nd's display driver exactly, which is why they
+ *   are NOT referenced yet - a wrong name makes "lk2nd,match-panel" fail.
+ * ---------------------------------------------------------------------------
+ */
+
+#include <skeleton64.dtsi>
+#include <lk2nd.dtsi>
+
+/ {
+	qcom,msm-id = <0xce 0x0>, <0xf8 0x0>, <0xf9 0x0>, <0xfa 0x0>;
+	qcom,board-id = <0x1000b 0x41>, <0x1000b 0x42>, <0x1000b 0x88>;
+};
+
+&lk2nd {
+	readboy-g35s {
+		model = "ReadBoy G35S";
+		compatible = "readboy,g35s";
+	};
+};
