@@ -65,20 +65,36 @@ jobs:
       - name: Build test initramfs
         run: |
           set -e
-          BB="$(command -v busybox || echo /bin/busybox)"
+          # resolve symlinks: /usr/bin/busybox is a link to the real static binary
+          BB="$(readlink -f "$(command -v busybox || echo /bin/busybox)")"
           echo "busybox: $BB"
+          ls -l "$BB"
           mkdir -p rootfs/bin rootfs/sbin rootfs/proc rootfs/sys rootfs/dev rootfs/tmp
-          cp "$BB" rootfs/bin/busybox
+          cp -L "$BB" rootfs/bin/busybox
           chmod +x rootfs/bin/busybox
+          SZ="$(stat -c%s rootfs/bin/busybox)"
+          echo "busybox size after copy: $SZ"
+          if [ "$SZ" -lt 300000 ]; then
+            echo "::error::busybox was not copied as a real file (got $SZ bytes)"
+            exit 1
+          fi
+          # create applet symlinks, but never touch busybox itself
           for app in $(rootfs/bin/busybox --list); do
+            [ "$app" = "busybox" ] && continue
             ln -sf busybox "rootfs/bin/$app" 2>/dev/null || true
           done
           cp helper/device/init rootfs/init
           chmod +x rootfs/init
           ( cd rootfs && find . | cpio -o -H newc --quiet | gzip -9 ) > initramfs.cpio.gz
           ls -lh initramfs.cpio.gz
-          echo "--- init script present ---"
-          head -3 rootfs/init
+          SZ2="$(stat -c%s initramfs.cpio.gz)"
+          echo "initramfs size: $SZ2"
+          if [ "$SZ2" -lt 200000 ]; then
+            echo "::error::initramfs suspiciously small, busybox likely missing"
+            exit 1
+          fi
+          echo "--- bin/busybox entry in archive ---"
+          ( cd rootfs && find ./bin -maxdepth 1 -name busybox -exec ls -l {} \; )
 
       - name: Package boot image
         run: |
@@ -90,7 +106,8 @@ jobs:
             --name "readboy-g35s" \
             --cmdline "console=ttyMSM0,115200 quiet"
           ls -lh boot-mainline-g35s.img
-          python3 -c "import struct,sys; d=open('boot-mainline-g35s.img','rb').read(); ks,_,rs,_,ss,_,_,pg=struct.unpack_from('<IIIIIIII',d,8); dt=struct.unpack_from('<I',d,40)[0]; print('kernel',ks,'ramdisk',rs,'dtb',dt,'page',pg,'total',len(d))"
+          python3 -c "import struct,sys; d=open('boot-mainline-g35s.img','rb').read(); ks,_,rs,_,ss,_,_,pg=struct.unpack_from('<IIIIIIII',d,8); dt=struct.unpack_from('<I',d,40)[0]; print('kernel',ks,'ramdisk',rs,'dtb',dt,'page',pg,'total',len(d)); sys.exit(0 if rs>200000 else 1)" \
+            || { echo '::error::ramdisk in boot image is too small (busybox missing)'; exit 1; }
 
       - name: Upload boot image
         uses: actions/upload-artifact@v4
