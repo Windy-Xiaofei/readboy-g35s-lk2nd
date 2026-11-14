@@ -11,32 +11,60 @@ unused unless ramoops is enabled) and read from a host with
 `fastboot oem debug readl <addr>`.
 
 Layout (32-bit words, little endian):
-  0x9FF80000  stage marker      (see M_* below)
-  0x9FF80004  is_scm_armv8_support()
-  0x9FF80008  scm_call2() return value
-  0x9FF8000C  scm_call() (legacy) return value
-  0x9FF80010  update_device_tree() started
-  0x9FF80014  update_device_tree() return value
-  0x9FF80018  scm_elexec_call() entered
-  0x9FF8001C  kernel entry argument
-  0x9FF80020  dtb (tags) argument
+  0x00  stage marker            (0xB00700xx / 0xB0070BAD)
+  0x04  is_scm_armv8_support()
+  0x08  scm_call2() return value
+  0x0C  scm_call() (legacy) return value
+  0x10  update_device_tree() started
+  0x14  update_device_tree() return value
+  0x18  scm_elexec_call() entered
+  0x1C  kernel entry argument
+  0x20  dtb (tags) argument
+  0x24  CPSR as read at entry
+  0x28  CPSR mode field
+  0x2C  EL2 direct-jump attempt marker
+  0x30  HCR_EL2 value (only written on the EL2 path)
 
-Additionally the patched scm_elexec_call() no longer gives up after the first
-convention fails: it retries with the legacy command-buffer call. On a board
-whose firmware never had to switch 32->64 bit before, only one of the two may
-be implemented, and trying both costs nothing because a successful call never
-returns.
+On the G35S the firmware answers the 32->64 milestone call with -4 and refuses
+to switch, so we also try the direct route: if lk2nd happens to be running at
+EL2 we do not need the secure monitor at all - set HCR_EL2.RW and drop into
+AArch64 with an exception return. That path is guarded on the CPSR mode, so it
+is a no-op on boards that really are at EL1.
 """
 import pathlib
-import re
 import sys
 
 MARK_BASE = 0x9FF80000
 
-SCM_HEAD = """\
+SCM_TEMPLATE = """\
 static inline void lk2nd_dbg_write(unsigned idx, unsigned val)
 {
 	*(volatile unsigned *)(__MARK_BASE__u + 4u * idx) = val;
+}
+
+/*
+ * Leave AArch32 EL2 and enter the kernel in AArch64 EL1.
+ * Only valid when the CPU really is in HYP mode; the caller checks CPSR.
+ */
+__attribute__((naked, noinline))
+static void lk2nd_el2_to_aarch64(unsigned entry, unsigned dtb)
+{
+	__asm__ volatile(
+		".arch_extension virt\\n\\t"
+		"mrc p15, 4, r2, c1, c1, 0\\n\\t"
+		"mov r3, #2\\n\\t"
+		"mov r3, r3, ror #2\\n\\t"
+		"orr r2, r2, r3\\n\\t"
+		"mcr p15, 4, r2, c1, c1, 0\\n\\t"
+		"movw r3, #0x3C5\\n\\t"
+		"msr SPSR_hyp, r3\\n\\t"
+		"msr ELR_hyp, r0\\n\\t"
+		"mov r0, r1\\n\\t"
+		"mov r1, #0\\n\\t"
+		"mov r2, #0\\n\\t"
+		"mov r3, #0\\n\\t"
+		"eret\\n\\t"
+	);
 }
 
 void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)
@@ -49,6 +77,7 @@ void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)
 	scmcall_arg scm_arg = {0};
 	uint32_t r_armv8 = 0xDEADBEEF;
 	uint32_t r_legacy = 0xDEADBEEF;
+	uint32_t cpsr = 0;
 	int armv8;
 
 	param.el1_x0 = dtb_offset;
@@ -57,6 +86,19 @@ void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)
 	lk2nd_dbg_write(6, 0xB0070001);
 	lk2nd_dbg_write(7, (unsigned)kernel_entry);
 	lk2nd_dbg_write(8, (unsigned)dtb_offset);
+
+	__asm__ volatile("mrs %0, cpsr" : "=r"(cpsr));
+	lk2nd_dbg_write(9, cpsr);
+	lk2nd_dbg_write(10, cpsr & 0x1f);
+
+	/* HYP mode means we are at EL2 and can switch without the monitor. */
+	if ((cpsr & 0x1f) == 0x1a)
+	{
+		lk2nd_dbg_write(11, 0xB0071000);
+		lk2nd_el2_to_aarch64((unsigned)kernel_entry, (unsigned)dtb_offset);
+		/* Only reached when the switch did not take effect. */
+		lk2nd_dbg_write(11, 0xB0071001);
+	}
 
 	armv8 = is_scm_armv8_support() ? 1 : 0;
 	lk2nd_dbg_write(1, (unsigned)armv8);
@@ -68,7 +110,6 @@ void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)
 
 	if (armv8)
 	{
-		/* ARMv8 SCM convention first */
 		scm_arg.x0 = MAKE_SIP_SCM_CMD(SCM_SVC_MILESTONE_32_64_ID,
 					      SCM_SVC_MILESTONE_CMD_ID);
 		scm_arg.x1 = MAKE_SCM_ARGS(0x2, SMC_PARAM_TYPE_BUFFER_READ);
@@ -118,8 +159,6 @@ void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)
 def replace_function(src: str, signature: str, new_body: str) -> str:
     """Replace an entire top-level function, keeping anything after it."""
     start = src.index(signature)
-    # walk backwards over a preceding comment block/blank lines is not needed:
-    # callers pass the exact signature line.
     brace = src.index("{", start)
     depth = 0
     i = brace
@@ -140,9 +179,10 @@ def patch_scm_c(path: pathlib.Path) -> None:
     sig = "void scm_elexec_call(paddr_t kernel_entry, paddr_t dtb_offset)"
     if sig not in src:
         raise SystemExit("scm_elexec_call signature not found in %s" % path)
-    out = replace_function(src, sig, SCM_HEAD.replace("__MARK_BASE__", "0x%08X" % MARK_BASE))
+    body = SCM_TEMPLATE.replace("__MARK_BASE__", "0x%08X" % MARK_BASE)
+    out = replace_function(src, sig, body)
     path.write_text(out)
-    print("patched %s (scm_elexec_call instrumented + legacy fallback)" % path)
+    print("patched %s (markers + EL2 direct jump + SCM fallback)" % path)
 
 
 def patch_aboot_c(path: pathlib.Path) -> None:
