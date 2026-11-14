@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 # -*- coding: utf-8 -*-
 """
 mkbootimg.py - minimal Android boot image (v0) packer, dependency free.

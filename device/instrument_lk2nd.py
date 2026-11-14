@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Instrument lk2nd so we can see where it dies on the ReadBoy G35S.
 
 The device has no UART and lk2nd stops fastboot before jumping to the kernel,

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
 # initramfs init for the first mainline boot test.
 # Purpose: prove the kernel booted by bringing up a USB CDC-ACM gadget,
 # so the host sees a new serial device. Nothing is written to storage.

@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Build output
+*.o
+*.elf
+*.bin
+build-*/
+out/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
